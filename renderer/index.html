@@ -1,0 +1,186 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WeChat Scraper Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="bg-orbit orbit-a"></div>
+  <div class="bg-orbit orbit-b"></div>
+
+  <div class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Refactored Pipeline</p>
+        <h1>WeChat Scraper Studio</h1>
+        <p class="hero-subtitle">基于微信公众平台 API（searchbiz / appmsgpublish）的公众号文章归档工具</p>
+      </div>
+      <button id="openMpBtn" class="btn btn-ghost">打开公众号平台</button>
+    </header>
+
+    <main class="workspace">
+      <section class="panel session-panel">
+        <h2>登录会话</h2>
+        <p class="panel-tip">在微信公众平台登录后，将 token 与 Cookie 粘贴到此处。</p>
+
+        <label for="tokenInput">Token</label>
+        <input id="tokenInput" type="text" placeholder="例如：123456789">
+
+        <label for="cookieInput">Cookie</label>
+        <textarea id="cookieInput" placeholder="例如：slave_sid=...; bizuin=...; token=..."></textarea>
+
+        <label for="userAgentInput">User-Agent（可选）</label>
+        <input id="userAgentInput" type="text" placeholder="默认自动填写">
+
+        <div class="button-row">
+          <button id="qrLoginBtn" class="btn btn-secondary">扫码登录</button>
+          <button id="saveSessionBtn" class="btn btn-primary">保存会话</button>
+          <button id="clearSessionBtn" class="btn btn-secondary">清空会话</button>
+          <button id="testSessionBtn" class="btn btn-secondary">检测会话</button>
+        </div>
+
+        <div class="badges">
+          <span id="sessionBadge" class="badge badge-muted">未检测</span>
+        </div>
+      </section>
+
+      <section class="panel article-panel">
+        <div class="panel-head">
+          <h2>公众号与文章</h2>
+          <span id="articleCount" class="count-pill">0 篇</span>
+        </div>
+
+        <div class="account-search">
+          <input id="accountKeyword" type="text" placeholder="输入公众号名称进行搜索">
+          <button id="searchBtn" class="btn btn-primary">搜索</button>
+        </div>
+
+        <div id="accountList" class="account-list empty-state">尚未搜索公众号</div>
+
+        <div class="filters">
+          <div>
+            <label for="startDate">开始日期</label>
+            <input id="startDate" type="date">
+          </div>
+          <div>
+            <label for="endDate">结束日期</label>
+            <input id="endDate" type="date">
+          </div>
+          <div>
+            <label for="maxPages">页数</label>
+            <input id="maxPages" type="number" min="1" max="50" value="3">
+          </div>
+          <div>
+            <label for="pageSize">每页</label>
+            <input id="pageSize" type="number" min="1" max="20" value="5">
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button id="loadArticlesBtn" class="btn btn-primary">加载文章列表</button>
+          <button id="clearArticlesBtn" class="btn btn-secondary">清空列表</button>
+        </div>
+
+        <div class="table-toolbar">
+          <button id="selectAllBtn" class="btn btn-text">全选</button>
+          <button id="clearSelectionBtn" class="btn btn-text">清除选择</button>
+          <span id="selectedCount">已选 0 篇</span>
+        </div>
+
+        <div class="table-wrap">
+          <table class="article-table">
+            <thead>
+              <tr>
+                <th class="col-check">选中</th>
+                <th>标题</th>
+                <th class="col-date">发布时间</th>
+              </tr>
+            </thead>
+            <tbody id="articleTableBody">
+              <tr>
+                <td colspan="3" class="empty-state">暂无文章数据</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel export-panel">
+        <h2>导出配置</h2>
+
+        <label for="outputDir">输出目录</label>
+        <div class="output-row">
+          <input id="outputDir" type="text" readonly placeholder="请选择输出目录">
+          <button id="selectDirBtn" class="btn btn-secondary">选择</button>
+        </div>
+
+        <div class="option-group">
+          <p class="option-title">输出格式</p>
+          <label><input type="radio" name="format" value="md" checked> Markdown</label>
+          <label><input type="radio" name="format" value="pdf"> PDF</label>
+        </div>
+
+        <div class="option-group full-export-group">
+          <div class="full-export-head">
+            <p class="option-title">全量导出（历史文章）</p>
+            <span id="fullExportModeBadge" class="badge badge-muted">未启动</span>
+          </div>
+
+          <label for="fullPageSize">分页大小（建议 5-10）</label>
+          <input id="fullPageSize" type="number" min="1" max="20" value="10">
+
+          <div class="button-row">
+            <button id="startFullExportBtn" class="btn btn-primary" disabled>开始全量导出</button>
+            <button id="resumeFullExportBtn" class="btn btn-secondary" disabled>继续上次任务</button>
+          </div>
+
+          <div id="fullExportSnapshot" class="full-export-snapshot">选择公众号后可查看历史任务快照</div>
+        </div>
+
+        <div class="option-group">
+          <p class="option-title">手动导出（当前列表）</p>
+          <p class="panel-tip">适合导出本次加载并勾选的文章。</p>
+
+          <div class="button-row">
+            <button id="startBtn" class="btn btn-primary" disabled>开始导出</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>停止</button>
+          </div>
+        </div>
+
+        <div class="progress-card">
+          <div class="progress-head">
+            <span id="progressText">等待开始</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card"><span class="stat-key">总数</span><span id="statTotal" class="stat-value">0</span></div>
+          <div class="stat-card"><span class="stat-key">成功</span><span id="statScraped" class="stat-value">0</span></div>
+          <div class="stat-card"><span class="stat-key">付费跳过</span><span id="statPaid" class="stat-value">0</span></div>
+          <div class="stat-card"><span class="stat-key">错误</span><span id="statError" class="stat-value">0</span></div>
+        </div>
+
+        <div class="log-box">
+          <div class="log-title">运行日志</div>
+          <div id="logList" class="log-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="status-bar">
+      <span id="statusText">就绪，等待配置登录会话</span>
+    </footer>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

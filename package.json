@@ -1,0 +1,74 @@
+{
+  "name": "wechat-scraper",
+  "version": "1.0.4",
+  "description": "微信公众号文章抓取工具 - 支持抓取历史文章并转换为 MD/PDF 格式",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "pack:win": "electron-builder --win nsis --x64 --publish never",
+    "pack:mac": "electron-builder --mac dmg --x64 --publish never",
+    "pack:linux": "electron-builder --linux AppImage --x64 --publish never"
+  },
+  "keywords": [
+    "electron",
+    "wechat",
+    "scraper",
+    "markdown",
+    "pdf"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "cheerio": "1.0.0-rc.12",
+    "cos-nodejs-sdk-v5": "^2.14.0",
+    "fs-extra": "^11.2.0",
+    "node-fetch": "^2.7.0",
+    "ora": "^5.4.1",
+    "turndown": "^7.1.2"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.cjiewong.wechatscraper",
+    "productName": "WeChat Scraper Studio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "modules/**/*",
+      "assets/**/*",
+      "renderer/**/*",
+      "!data/**",
+      "!logs/**",
+      "!docs/**",
+      "!node_modules/.cache/**"
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "include": "build/installer.nsh"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  }
+}
