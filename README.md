@@ -2,7 +2,7 @@
 
 `wechat-scraper` 已重构为基于 **微信公众平台 API** 的桌面工具，不再依赖搜狗微信页面抓取。
 
-核心接口流程参考 `D:\project\we-mp-rss`：
+核心接口流程参考微信公众号平台公开接口：
 - `https://mp.weixin.qq.com/cgi-bin/searchbiz`（搜索公众号）
 - `https://mp.weixin.qq.com/cgi-bin/appmsgpublish`（分页拉取历史文章）
 
@@ -11,7 +11,7 @@
 - 使用公众号后台 `token + Cookie` 直接访问官方接口
 - 搜索公众号并按时间范围加载历史文章
 - 批量导出文章为 Markdown / PDF
-- 可选图片处理：保留原图链接 / 上传腾讯云 COS
+- 图片链接保留与内容导出能力
 - 全新的三栏式 UI（会话配置、文章筛选、导出控制）
 - 完整导出进度、统计和日志反馈
 
@@ -39,32 +39,6 @@ npm run dev
 6. 设置日期范围、分页参数，点击「加载文章列表」
 7. 勾选文章、选择导出目录与格式，点击「开始导出」
 
-## COS 配置（可选）
-
-默认读取：
-
-`D:\project\obsidian_huaigu\.obsidian\plugins\imgur-tencent-cos\data.json`
-
-也可通过环境变量覆盖：
-
-```bash
-set WECHAT_SCRAPER_COS_CONFIG=你的配置文件路径
-```
-
-配置结构：
-
-```json
-{
-  "secretId": "xxx",
-  "secretKey": "xxx",
-  "bucket": "xxx",
-  "region": "ap-shanghai",
-  "prefix": "wechat-articles"
-}
-```
-
-若 COS 未配置，应用会自动回退为保留原图链接。
-
 ## 注意事项
 
 - `token/Cookie` 属于敏感凭据，请仅在本地可信环境使用。
@@ -77,7 +51,6 @@ set WECHAT_SCRAPER_COS_CONFIG=你的配置文件路径
 - node-fetch
 - cheerio
 - Turndown
-- 腾讯云 COS SDK
 
 ## GitHub Actions 打包发布
 
