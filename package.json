@@ -1,6 +1,6 @@
 {
   "name": "wechat-scraper",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "微信公众号文章抓取工具 - 支持抓取历史文章并转换为 MD/PDF 格式",
   "main": "main.js",
   "scripts": {
