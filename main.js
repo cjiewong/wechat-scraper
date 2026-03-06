@@ -69,6 +69,15 @@ function getNowYmdLocal() {
   return `${y}-${m}-${d}`;
 }
 
+function hasReachedDailyTime(nowHm, dailyHm) {
+  const now = String(nowHm || '');
+  const target = String(dailyHm || '');
+  if (!/^\d{2}:\d{2}$/.test(now) || !/^\d{2}:\d{2}$/.test(target)) {
+    return false;
+  }
+  return now >= target;
+}
+
 function summarizeIncrementalConfigForClient(configPayload) {
   if (!configPayload) {
     return null;
@@ -1328,7 +1337,7 @@ function startIncrementalScheduler() {
 
       const nowHm = getNowHmLocal();
       const today = getNowYmdLocal();
-      if (String(scheduler.dailyTime || '') !== nowHm) {
+      if (!hasReachedDailyTime(nowHm, scheduler.dailyTime)) {
         return;
       }
       if (String(scheduler.lastTriggeredDate || '') === today) {
@@ -1664,7 +1673,25 @@ ipcMain.handle('get-incremental-sync-config', async () => {
 
 ipcMain.handle('save-incremental-sync-config', async (_event, nextConfig) => {
   try {
-    const saved = await saveIncrementalSyncConfig(nextConfig || {});
+    const previous = incrementalConfigCache || (await loadIncrementalSyncConfig());
+    let saved = await saveIncrementalSyncConfig(nextConfig || {});
+
+    const prevScheduler = previous.scheduler || {};
+    const nextScheduler = saved.scheduler || {};
+    const dailyTimeChanged = String(prevScheduler.dailyTime || '') !== String(nextScheduler.dailyTime || '');
+    const enabledChangedToTrue = !Boolean(prevScheduler.enabled) && Boolean(nextScheduler.enabled);
+
+    // Allow same-day retrigger when schedule time is modified or scheduler just enabled.
+    if ((dailyTimeChanged || enabledChangedToTrue) && nextScheduler.enabled) {
+      saved = await saveIncrementalSyncConfig({
+        ...saved,
+        scheduler: {
+          ...nextScheduler,
+          lastTriggeredDate: ''
+        }
+      });
+    }
+
     return {
       success: true,
       config: summarizeIncrementalConfigForClient(saved)

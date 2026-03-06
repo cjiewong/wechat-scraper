@@ -482,6 +482,14 @@ async function runIncrementalTarget(target, runtime, deps) {
       };
     } catch (error) {
       summary.failed += 1;
+      await logger.error('Failed to export incremental article', {
+        accountName: target.accountName,
+        fakeid: target.fakeid,
+        format: target.format,
+        title: scraped.title || article.title || '',
+        url: scraped.url || article.url || '',
+        error: error.message || String(error)
+      });
       failures.push({
         stage: 'export',
         id: articleKey,

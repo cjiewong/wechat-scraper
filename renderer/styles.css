@@ -100,6 +100,16 @@ body::before {
   animation: riseIn 0.5s ease;
 }
 
+.hero-main {
+  min-width: 0;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   font-size: 12px;
@@ -123,12 +133,51 @@ h1 {
   font-size: clamp(14px, 1.1vw, 18px);
 }
 
+.top-tabs {
+  margin-top: 12px;
+  display: inline-flex;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(235, 245, 241, 0.9);
+  border: 1px solid #c8ddd6;
+}
+
+.tab-btn {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: transparent;
+  color: #3d6368;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn.is-active {
+  color: #f5fffc;
+  background: linear-gradient(135deg, #178772, #0f6159 58%, #124a57);
+  box-shadow: 0 6px 14px rgba(18, 91, 82, 0.22);
+}
+
+.view-stack {
+  min-height: 0;
+}
+
+.view-panel {
+  display: none;
+}
+
+.view-panel.is-active {
+  display: block;
+  animation: riseIn 0.28s ease;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(290px, 0.95fr) minmax(560px, 1.85fr) minmax(300px, 1fr);
-  grid-template-areas:
-    'session article export'
-    'incremental incremental incremental';
+  grid-template-areas: 'session article export';
   gap: 14px;
   min-height: 0;
 }
@@ -145,8 +194,14 @@ h1 {
   grid-area: export;
 }
 
+.incremental-workspace {
+  display: grid;
+  grid-template-columns: minmax(860px, 1fr);
+  justify-content: center;
+}
+
 .incremental-panel {
-  grid-area: incremental;
+  grid-area: auto;
 }
 
 .panel {
@@ -797,8 +852,7 @@ input[type='radio'] {
     grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
     grid-template-areas:
       'session article'
-      'export article'
-      'incremental incremental';
+      'export article';
     align-items: start;
   }
 
@@ -821,13 +875,21 @@ input[type='radio'] {
     align-items: flex-start;
   }
 
+  .top-tabs {
+    width: 100%;
+  }
+
+  .tab-btn {
+    flex: 1;
+    text-align: center;
+  }
+
   .workspace {
     grid-template-columns: 1fr;
     grid-template-areas:
       'article'
       'session'
-      'export'
-      'incremental';
+      'export';
   }
 
   .filters {
@@ -837,6 +899,10 @@ input[type='radio'] {
   .table-wrap {
     min-height: 220px;
     max-height: 340px;
+  }
+
+  .incremental-workspace {
+    grid-template-columns: 1fr;
   }
 }
 

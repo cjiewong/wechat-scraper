@@ -1,6 +1,7 @@
 ﻿const TurndownService = require('turndown');
 const { BrowserWindow } = require('electron');
 const fs = require('fs-extra');
+const path = require('path');
 
 class ContentConverter {
   constructor() {
@@ -76,10 +77,11 @@ class ContentConverter {
         }
       });
 
+      await fs.ensureDir(path.dirname(outputPath));
       await fs.writeFile(outputPath, pdfData);
       return { success: true, outputPath };
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: error.message || String(error) };
     } finally {
       win.close();
     }

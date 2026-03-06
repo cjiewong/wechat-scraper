@@ -133,6 +133,13 @@ const statError = document.getElementById('statError');
 
 const logList = document.getElementById('logList');
 const statusText = document.getElementById('statusText');
+const homeTabBtn = document.getElementById('homeTabBtn');
+const incrementalTabBtn = document.getElementById('incrementalTabBtn');
+const homeView = document.getElementById('homeView');
+const incrementalView = document.getElementById('incrementalView');
+const gotoIncrementalPageBtn = document.getElementById('gotoIncrementalPageBtn');
+const homeIncrementalStatusBadge = document.getElementById('homeIncrementalStatusBadge');
+const homeIncrementalSummary = document.getElementById('homeIncrementalSummary');
 
 const state = {
   accounts: [],
@@ -146,7 +153,8 @@ const state = {
   lastFullProgressLogAt: 0,
   incrementalConfig: null,
   isIncrementalRunning: false,
-  lastIncrementalProgressLogAt: 0
+  lastIncrementalProgressLogAt: 0,
+  activeView: 'home'
 };
 
 function escapeHtml(value) {
@@ -200,6 +208,29 @@ function setStatus(message, level = 'info') {
 
 function setStatusTextOnly(message) {
   statusText.textContent = message;
+}
+
+function setActiveView(view, options = {}) {
+  const targetView = view === 'incremental' ? 'incremental' : 'home';
+  const persist = options.persist !== false;
+  state.activeView = targetView;
+
+  if (homeView) {
+    homeView.classList.toggle('is-active', targetView === 'home');
+  }
+  if (incrementalView) {
+    incrementalView.classList.toggle('is-active', targetView === 'incremental');
+  }
+  if (homeTabBtn) {
+    homeTabBtn.classList.toggle('is-active', targetView === 'home');
+  }
+  if (incrementalTabBtn) {
+    incrementalTabBtn.classList.toggle('is-active', targetView === 'incremental');
+  }
+
+  if (persist) {
+    localStorage.setItem('wechat_scraper_active_view', targetView);
+  }
 }
 
 function selectedFormat() {
@@ -334,6 +365,43 @@ function incrementalStatusBadgeType(status) {
   return 'muted';
 }
 
+function renderHomeIncrementalSummary(configPayload) {
+  if (!homeIncrementalSummary || !homeIncrementalStatusBadge) {
+    return;
+  }
+
+  if (!supportsIncrementalSync) {
+    setBadge(homeIncrementalStatusBadge, '不可用', 'error');
+    homeIncrementalSummary.textContent = '当前版本不支持增量同步，请升级主进程与 preload。';
+    return;
+  }
+
+  if (!configPayload) {
+    setBadge(homeIncrementalStatusBadge, '待机', 'muted');
+    homeIncrementalSummary.textContent = '尚未加载增量同步状态';
+    return;
+  }
+
+  const scheduler = configPayload.scheduler || {};
+  const runtime = configPayload.runtime || {};
+  const status = state.isIncrementalRunning ? 'running' : String(scheduler.lastStatus || 'idle');
+  const enabledTargets = (configPayload.targets || []).filter((item) => item.enabled).length;
+
+  setBadge(
+    homeIncrementalStatusBadge,
+    incrementalStatusLabel(status),
+    incrementalStatusBadgeType(status)
+  );
+
+  homeIncrementalSummary.textContent = [
+    `调度：${scheduler.enabled ? '已启用' : '已关闭'} / 每日 ${scheduler.dailyTime || '08:30'}`,
+    `目标：共 ${(configPayload.targets || []).length} 个，启用 ${enabledTargets} 个`,
+    `窗口：${Number(runtime.incrementalDays || 7)} 天`,
+    `上次执行：${scheduler.lastRunAt ? formatDate(scheduler.lastRunAt) : '-'}`,
+    `说明：${scheduler.lastMessage || '无'}`
+  ].join('\n');
+}
+
 function collectIncrementalConfigFromForm() {
   const current = state.incrementalConfig || {};
   const scheduler = current.scheduler || {};
@@ -455,6 +523,7 @@ function renderIncrementalConfig() {
     incrementalSnapshot.textContent = '尚未加载增量同步配置';
     renderIncrementalTargets();
     updateActionState();
+    renderHomeIncrementalSummary(null);
     return;
   }
 
@@ -488,6 +557,7 @@ function renderIncrementalConfig() {
   ].filter(Boolean).join('\n');
 
   renderIncrementalTargets();
+  renderHomeIncrementalSummary(configPayload);
   updateActionState();
 }
 
@@ -1069,6 +1139,30 @@ async function stopExport() {
 }
 
 function bindEvents() {
+  if (homeTabBtn) {
+    homeTabBtn.addEventListener('click', () => {
+      setActiveView('home');
+    });
+  }
+  if (incrementalTabBtn) {
+    incrementalTabBtn.addEventListener('click', () => {
+      if (!supportsIncrementalSync) {
+        setStatus('当前版本不支持增量同步，请升级应用', 'error');
+        return;
+      }
+      setActiveView('incremental');
+    });
+  }
+  if (gotoIncrementalPageBtn) {
+    gotoIncrementalPageBtn.addEventListener('click', () => {
+      if (!supportsIncrementalSync) {
+        setStatus('当前版本不支持增量同步，请升级应用', 'error');
+        return;
+      }
+      setActiveView('incremental');
+    });
+  }
+
   qrLoginBtn.addEventListener('click', async () => {
     if (!electronAPI.startQrLogin) {
       setStatus('当前版本不支持扫码登录，请升级应用', 'error');
@@ -1388,6 +1482,7 @@ function bindIpcEvents() {
       }
 
       setBadge(incrementalModeBadge, '执行中', 'success');
+      renderHomeIncrementalSummary(state.incrementalConfig);
       updateActionState();
     });
   }
@@ -1423,6 +1518,8 @@ async function init() {
   bindEvents();
   bindIpcEvents();
   hydrateOutputDir();
+  const rememberedView = localStorage.getItem('wechat_scraper_active_view');
+  setActiveView(rememberedView === 'incremental' ? 'incremental' : 'home', { persist: false });
 
   await hydrateSessionFromDisk();
 
@@ -1437,6 +1534,11 @@ async function init() {
     runIncrementalNowBtn.disabled = true;
     stopIncrementalBtn.disabled = true;
     incrementalSnapshot.textContent = '当前版本不支持增量同步，请升级主进程与 preload。';
+    if (gotoIncrementalPageBtn) {
+      gotoIncrementalPageBtn.disabled = true;
+    }
+    setActiveView('home');
+    renderHomeIncrementalSummary(null);
   } else {
     await refreshIncrementalConfig();
   }
