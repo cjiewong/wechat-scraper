@@ -7,6 +7,12 @@ const ArticleScraper = require('./modules/scraper');
 const ContentConverter = require('./modules/converter');
 const FileManager = require('./modules/fileManager');
 const Logger = require('./modules/logger');
+const {
+  loadConfig: loadIncrementalConfigFile,
+  saveConfig: saveIncrementalConfigFile,
+  runIncrementalBatch,
+  createTargetFromAccount
+} = require('./modules/incrementalSync');
 
 try {
   // Enable optional manual GC in long-running exports when Electron allows it.
@@ -28,6 +34,10 @@ let fullExportPromise = null;
 let memoryMonitorTimer = null;
 let autoResumeTimer = null;
 let autoResumeTaskId = '';
+let incrementalSyncPromise = null;
+let incrementalStopRequested = false;
+let incrementalSchedulerTimer = null;
+let incrementalConfigCache = null;
 
 function getAppStorageRoot() {
   if (app.isPackaged) {
@@ -38,6 +48,46 @@ function getAppStorageRoot() {
 
 function getTasksDir() {
   return path.join(getAppStorageRoot(), 'data', 'tasks');
+}
+
+function getIncrementalConfigPath() {
+  return path.join(getAppStorageRoot(), 'data', 'incremental-sync-config.json');
+}
+
+function getNowHmLocal() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function getNowYmdLocal() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function summarizeIncrementalConfigForClient(configPayload) {
+  if (!configPayload) {
+    return null;
+  }
+
+  return {
+    version: Number(configPayload.version || 1),
+    scheduler: {
+      ...(configPayload.scheduler || {})
+    },
+    runtime: {
+      ...(configPayload.runtime || {})
+    },
+    targets: Array.isArray(configPayload.targets)
+      ? configPayload.targets.map((item) => ({
+          ...item
+        }))
+      : []
+  };
 }
 const MAX_TASK_FAILURE_CACHE = 500;
 const MEMORY_MONITOR_INTERVAL_MS = 30000;
@@ -50,6 +100,7 @@ const MEMORY_PROACTIVE_GC_INTERVAL = 40;
 const AUTO_RESUME_BASE_DELAY_MS = 15000;
 const AUTO_RESUME_MAX_DELAY_MS = 120000;
 const AUTO_RESUME_MAX_ATTEMPTS = 50;
+const INCREMENTAL_SCHEDULER_TICK_MS = 30000;
 
 function sendStatus(message, level = 'info') {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -474,6 +525,18 @@ async function saveExportManifest(outputDir, manifest) {
   );
 }
 
+async function loadIncrementalSyncConfig() {
+  const loaded = await loadIncrementalConfigFile(getIncrementalConfigPath());
+  incrementalConfigCache = loaded;
+  return loaded;
+}
+
+async function saveIncrementalSyncConfig(nextConfig) {
+  const saved = await saveIncrementalConfigFile(getIncrementalConfigPath(), nextConfig);
+  incrementalConfigCache = saved;
+  return saved;
+}
+
 function summarizeTaskForClient(task) {
   if (!task) {
     return null;
@@ -496,6 +559,18 @@ function emitFullExportProgress(payload) {
 function emitFullExportDone(payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('full-export-done', payload);
+  }
+}
+
+function emitIncrementalSyncProgress(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('incremental-sync-progress', payload);
+  }
+}
+
+function emitIncrementalSyncDone(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('incremental-sync-done', payload);
   }
 }
 
@@ -998,6 +1073,306 @@ async function launchFullExport(task, options = {}) {
     });
 }
 
+function getEnabledIncrementalTargets(configPayload, targetIds = []) {
+  const normalizedIds = Array.isArray(targetIds) ? targetIds.filter(Boolean) : [];
+  const idSet = new Set(normalizedIds);
+  const allEnabled = (configPayload.targets || []).filter((item) => item.enabled);
+  if (!idSet.size) {
+    return allEnabled;
+  }
+  return allEnabled.filter((item) => idSet.has(item.id));
+}
+
+function summarizeIncrementalRunStatus(result) {
+  if (!result) {
+    return {
+      status: 'failed',
+      message: '增量同步返回空结果'
+    };
+  }
+
+  if (result.stopped) {
+    return {
+      status: 'failed',
+      message: '增量同步已停止'
+    };
+  }
+
+  const failed = Number(result.total?.failed || 0);
+  if (failed > 0) {
+    return {
+      status: 'partial_failed',
+      message: `增量同步完成，失败 ${failed} 篇`
+    };
+  }
+
+  return {
+    status: 'success',
+    message: `增量同步完成，成功 ${Number(result.total?.exported || 0)} 篇`
+  };
+}
+
+async function applyIncrementalResultToConfig(baseConfig, result, finalStatus) {
+  const now = new Date().toISOString();
+  const summaryMap = new Map();
+  for (const item of result.summaries || []) {
+    if (item && item.targetId) {
+      summaryMap.set(item.targetId, item);
+    }
+  }
+
+  const nextTargets = (baseConfig.targets || []).map((target) => {
+    const matched = summaryMap.get(target.id);
+    if (!matched) {
+      return target;
+    }
+
+    const targetSummary = matched.summary || {};
+    const failed = Number(targetSummary.failed || 0);
+    const targetStatus = matched.fatalError
+      ? 'failed'
+      : (failed > 0 ? 'partial_failed' : (targetSummary.stopped ? 'failed' : 'success'));
+
+    return {
+      ...target,
+      lastRunAt: now,
+      lastStatus: targetStatus,
+      lastSummary: {
+        fetched: Number(targetSummary.fetched || 0),
+        exported: Number(targetSummary.exported || 0),
+        skippedExisting: Number(targetSummary.skippedExisting || 0),
+        skippedPaid: Number(targetSummary.skippedPaid || 0),
+        failed: Number(targetSummary.failed || 0)
+      },
+      lastError: String(matched.fatalError || '')
+    };
+  });
+
+  const nextConfig = {
+    ...baseConfig,
+    targets: nextTargets,
+    scheduler: {
+      ...(baseConfig.scheduler || {}),
+      lastRunAt: now,
+      lastStatus: finalStatus.status,
+      lastMessage: finalStatus.message
+    }
+  };
+
+  return saveIncrementalSyncConfig(nextConfig);
+}
+
+async function launchIncrementalSync(options = {}) {
+  if (incrementalSyncPromise) {
+    throw new Error('已有增量同步任务正在运行');
+  }
+  if (isScraping) {
+    throw new Error('已有任务执行中，请先停止当前任务');
+  }
+
+  const source = String(options.source || 'manual');
+  const targetIds = Array.isArray(options.targetIds) ? options.targetIds : [];
+  const runtimeOverride = options.runtime && typeof options.runtime === 'object'
+    ? options.runtime
+    : null;
+
+  const loadedConfig = incrementalConfigCache || (await loadIncrementalSyncConfig());
+  const selectedTargets = getEnabledIncrementalTargets(loadedConfig, targetIds);
+  if (!selectedTargets.length) {
+    throw new Error('没有已启用的增量同步目标');
+  }
+
+  const effectiveConfig = {
+    ...loadedConfig,
+    runtime: runtimeOverride
+      ? {
+          ...loadedConfig.runtime,
+          ...runtimeOverride
+        }
+      : {
+          ...loadedConfig.runtime
+        },
+    targets: selectedTargets.map((item) => ({ ...item }))
+  };
+
+  incrementalStopRequested = false;
+  scraper.resetStopFlag();
+  isScraping = true;
+  activeScrapeMode = 'incremental';
+  startMemoryMonitor(`incremental-sync:${source}`);
+  sendStatus(`开始增量同步（${selectedTargets.length} 个公众号）`, 'info');
+
+  const baseScraperConfig = {
+    ...config,
+    scraper: {
+      ...config.scraper
+    }
+  };
+
+  incrementalSyncPromise = runIncrementalBatch(effectiveConfig, {
+    scraper,
+    converter,
+    logger,
+    baseScraperConfig,
+    shouldStop: () => incrementalStopRequested || Boolean(scraper.stopped),
+    onProgress: (payload) => {
+      emitIncrementalSyncProgress({
+        source,
+        ...(payload || {}),
+        timestamp: new Date().toISOString()
+      });
+
+      if (!payload || !payload.type) {
+        return;
+      }
+
+      if (payload.type === 'target-start') {
+        sendStatus(
+          `[增量] ${payload.index}/${payload.totalTargets} 开始：${payload.target?.accountName || '-'}`,
+          'info'
+        );
+      } else if (payload.type === 'target-indexed') {
+        sendStatus(
+          `[增量] ${payload.target?.accountName || '-'}：窗口内 ${payload.totalArticles || 0} 篇`,
+          'info'
+        );
+      } else if (payload.type === 'target-progress') {
+        const total = Number(payload.total || 0);
+        const current = Number(payload.current || 0);
+        if (total > 0 && (current === total || current % 10 === 0)) {
+          sendStatus(
+            `[增量] ${payload.target?.accountName || '-'}：${current}/${total}`,
+            'info'
+          );
+        }
+      }
+    }
+  })
+    .then(async (result) => {
+      const finalStatus = summarizeIncrementalRunStatus(result);
+      const savedConfig = await applyIncrementalResultToConfig(loadedConfig, result, finalStatus);
+      emitIncrementalSyncDone({
+        source,
+        status: finalStatus.status,
+        message: finalStatus.message,
+        result,
+        config: summarizeIncrementalConfigForClient(savedConfig)
+      });
+
+      if (finalStatus.status === 'success') {
+        sendStatus(finalStatus.message, 'success');
+      } else if (finalStatus.status === 'partial_failed') {
+        sendStatus(finalStatus.message, 'warn');
+      } else {
+        sendStatus(finalStatus.message, 'warn');
+      }
+      return {
+        status: finalStatus.status,
+        message: finalStatus.message,
+        result,
+        config: savedConfig
+      };
+    })
+    .catch(async (error) => {
+      const loaded = incrementalConfigCache || loadedConfig;
+      const failedConfig = await saveIncrementalSyncConfig({
+        ...loaded,
+        scheduler: {
+          ...(loaded.scheduler || {}),
+          lastRunAt: new Date().toISOString(),
+          lastStatus: 'failed',
+          lastMessage: error.message || String(error)
+        }
+      });
+      emitIncrementalSyncDone({
+        source,
+        status: 'failed',
+        message: error.message || String(error),
+        result: null,
+        config: summarizeIncrementalConfigForClient(failedConfig)
+      });
+      sendStatus(`增量同步失败：${error.message || String(error)}`, 'error');
+      throw error;
+    })
+    .finally(() => {
+      scraper.resetStopFlag();
+      incrementalStopRequested = false;
+      isScraping = false;
+      if (activeScrapeMode === 'incremental') {
+        activeScrapeMode = null;
+      }
+      incrementalSyncPromise = null;
+      stopMemoryMonitor();
+    });
+
+  return incrementalSyncPromise;
+}
+
+function stopIncrementalScheduler() {
+  if (incrementalSchedulerTimer) {
+    clearInterval(incrementalSchedulerTimer);
+    incrementalSchedulerTimer = null;
+  }
+}
+
+function startIncrementalScheduler() {
+  stopIncrementalScheduler();
+
+  incrementalSchedulerTimer = setInterval(async () => {
+    try {
+      const loaded = incrementalConfigCache || (await loadIncrementalSyncConfig());
+      const scheduler = loaded.scheduler || {};
+      if (!scheduler.enabled) {
+        return;
+      }
+
+      const nowHm = getNowHmLocal();
+      const today = getNowYmdLocal();
+      if (String(scheduler.dailyTime || '') !== nowHm) {
+        return;
+      }
+      if (String(scheduler.lastTriggeredDate || '') === today) {
+        return;
+      }
+
+      const markedConfig = await saveIncrementalSyncConfig({
+        ...loaded,
+        scheduler: {
+          ...scheduler,
+          lastTriggeredDate: today
+        }
+      });
+
+      if (isScraping) {
+        await saveIncrementalSyncConfig({
+          ...markedConfig,
+          scheduler: {
+            ...(markedConfig.scheduler || {}),
+            lastRunAt: new Date().toISOString(),
+            lastStatus: 'skipped_conflict',
+            lastMessage: '定时触发时检测到已有任务运行，已跳过'
+          }
+        });
+        sendStatus('定时增量同步已跳过：当前有任务在执行', 'warn');
+        return;
+      }
+
+      await launchIncrementalSync({ source: 'scheduler' });
+    } catch (error) {
+      if (logger) {
+        await logger.error('Incremental scheduler tick failed', {
+          error: error.message || String(error)
+        });
+      }
+      sendStatus(`定时增量任务执行失败：${error.message || String(error)}`, 'error');
+    }
+  }, INCREMENTAL_SCHEDULER_TICK_MS);
+
+  if (incrementalSchedulerTimer && typeof incrementalSchedulerTimer.unref === 'function') {
+    incrementalSchedulerTimer.unref();
+  }
+}
+
 function createWindow() {
   const windowIconPath = path.join(__dirname, 'assets', 'icon-1024.png');
   mainWindow = new BrowserWindow({
@@ -1059,6 +1434,8 @@ async function initializeServices() {
   logger = new Logger(path.join(getAppStorageRoot(), 'logs'));
   await logger.init();
   await ensureTaskDir();
+  await loadIncrementalSyncConfig();
+  startIncrementalScheduler();
 
   scraper = new ArticleScraper(config, logger);
   converter = new ContentConverter();
@@ -1271,6 +1648,110 @@ ipcMain.handle('get-article-list', async (_event, options) => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+ipcMain.handle('get-incremental-sync-config', async () => {
+  try {
+    const loaded = incrementalConfigCache || (await loadIncrementalSyncConfig());
+    return {
+      success: true,
+      config: summarizeIncrementalConfigForClient(loaded)
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('save-incremental-sync-config', async (_event, nextConfig) => {
+  try {
+    const saved = await saveIncrementalSyncConfig(nextConfig || {});
+    return {
+      success: true,
+      config: summarizeIncrementalConfigForClient(saved)
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('add-incremental-target-from-selected', async (_event, payload) => {
+  try {
+    const loaded = incrementalConfigCache || (await loadIncrementalSyncConfig());
+    const target = createTargetFromAccount(payload || {});
+    if ((loaded.targets || []).some((item) => item.fakeid === target.fakeid)) {
+      throw new Error('该公众号已存在于增量同步配置中');
+    }
+
+    const saved = await saveIncrementalSyncConfig({
+      ...loaded,
+      targets: [...(loaded.targets || []), target]
+    });
+
+    return {
+      success: true,
+      config: summarizeIncrementalConfigForClient(saved)
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('remove-incremental-target', async (_event, payload) => {
+  try {
+    const id = String(payload?.id || '').trim();
+    if (!id) {
+      throw new Error('缺少目标 ID');
+    }
+
+    const loaded = incrementalConfigCache || (await loadIncrementalSyncConfig());
+    const nextTargets = (loaded.targets || []).filter((item) => item.id !== id);
+    const saved = await saveIncrementalSyncConfig({
+      ...loaded,
+      targets: nextTargets
+    });
+
+    return {
+      success: true,
+      config: summarizeIncrementalConfigForClient(saved)
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('run-incremental-sync-now', async (_event, payload) => {
+  try {
+    const result = await launchIncrementalSync({
+      source: 'manual',
+      targetIds: Array.isArray(payload?.targetIds) ? payload.targetIds : [],
+      runtime: payload?.runtime && typeof payload.runtime === 'object'
+        ? payload.runtime
+        : null
+    });
+
+    return {
+      success: true,
+      status: result.status,
+      message: result.message,
+      result: result.result,
+      config: summarizeIncrementalConfigForClient(result.config)
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('stop-incremental-sync', async () => {
+  if (!incrementalSyncPromise || activeScrapeMode !== 'incremental') {
+    return { success: true, message: '当前没有运行中的增量同步任务' };
+  }
+
+  incrementalStopRequested = true;
+  if (scraper) {
+    scraper.stop();
+  }
+  sendStatus('已请求停止增量同步，正在等待任务收尾', 'warn');
+  return { success: true };
 });
 
 ipcMain.handle('start-full-export', async (_event, options) => {
@@ -1611,6 +2092,9 @@ ipcMain.handle('stop-scraping', async () => {
   }
   if (activeScrapeMode === 'full') {
     sendStatus('已请求停止全量导出，正在保存进度', 'warn');
+  } else if (activeScrapeMode === 'incremental') {
+    incrementalStopRequested = true;
+    sendStatus('已请求停止增量同步，正在等待任务收尾', 'warn');
   } else {
     sendStatus('已请求停止，正在等待当前任务收尾', 'warn');
   }
@@ -1712,6 +2196,7 @@ app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
     clearAutoResumeTimer();
     stopMemoryMonitor();
+    stopIncrementalScheduler();
     app.quit();
   }
 });

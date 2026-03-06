@@ -119,7 +119,7 @@
           <button id="selectDirBtn" class="btn btn-secondary">选择</button>
         </div>
 
-        <div class="option-group">
+        <div class="option-group output-format-group">
           <p class="option-title">输出格式</p>
           <label><input type="radio" name="format" value="md" checked> Markdown</label>
           <label><input type="radio" name="format" value="pdf"> PDF</label>
@@ -172,6 +172,71 @@
         <div class="log-box">
           <div class="log-title">运行日志</div>
           <div id="logList" class="log-list"></div>
+        </div>
+      </section>
+
+      <section class="panel incremental-panel">
+        <div class="panel-head">
+          <h2>增量同步（定时任务）</h2>
+          <span id="incrementalModeBadge" class="badge badge-muted">待机</span>
+        </div>
+        <p class="panel-tip">按每日时间自动执行已启用公众号增量同步，也可手动立即触发。</p>
+
+        <div class="option-group incremental-group">
+          <div class="filters incremental-filters">
+            <div>
+              <label for="incrementalEnabled">启用每日调度</label>
+              <input id="incrementalEnabled" type="checkbox">
+            </div>
+            <div>
+              <label for="incrementalDailyTime">每日时间</label>
+              <input id="incrementalDailyTime" type="time" value="08:30">
+            </div>
+            <div>
+              <label for="incrementalTimezone">时区</label>
+              <div id="incrementalTimezone" class="readonly-value">-</div>
+            </div>
+            <div>
+              <label for="incrementalDays">增量窗口（天）</label>
+              <input id="incrementalDays" type="number" min="1" max="365" value="7">
+            </div>
+            <div>
+              <label for="incrementalRuntimePageSize">分页大小</label>
+              <input id="incrementalRuntimePageSize" type="number" min="1" max="20" value="10">
+            </div>
+            <div>
+              <label for="incrementalRuntimeMaxPages">最大页数</label>
+              <input id="incrementalRuntimeMaxPages" type="number" min="1" max="200" value="20">
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button id="saveIncrementalConfigBtn" class="btn btn-secondary">保存增量配置</button>
+            <button id="addIncrementalTargetBtn" class="btn btn-secondary">添加当前公众号</button>
+            <button id="runIncrementalNowBtn" class="btn btn-primary">立即增量同步</button>
+            <button id="stopIncrementalBtn" class="btn btn-danger" disabled>停止增量同步</button>
+          </div>
+
+          <div class="table-wrap incremental-table-wrap">
+            <table class="article-table incremental-target-table">
+              <thead>
+                <tr>
+                  <th class="col-check">启用</th>
+                  <th>账号信息</th>
+                  <th>输出设置</th>
+                  <th>最近结果</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="incrementalTargetTableBody">
+                <tr>
+                  <td colspan="5" class="empty-state">暂无增量同步目标</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="incrementalSnapshot" class="full-export-snapshot">尚未加载增量同步配置</div>
         </div>
       </section>
     </main>

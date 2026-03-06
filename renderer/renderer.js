@@ -17,6 +17,12 @@ function createElectronApiFallback() {
       stopFullExport: () => ipcRenderer.invoke('stop-full-export'),
       getFullExportTask: (options) => ipcRenderer.invoke('get-full-export-task', options),
       resumeFullExport: (options) => ipcRenderer.invoke('resume-full-export', options),
+      getIncrementalSyncConfig: () => ipcRenderer.invoke('get-incremental-sync-config'),
+      saveIncrementalSyncConfig: (configPayload) => ipcRenderer.invoke('save-incremental-sync-config', configPayload),
+      addIncrementalTargetFromSelected: (payload) => ipcRenderer.invoke('add-incremental-target-from-selected', payload),
+      removeIncrementalTarget: (payload) => ipcRenderer.invoke('remove-incremental-target', payload),
+      runIncrementalSyncNow: (payload) => ipcRenderer.invoke('run-incremental-sync-now', payload),
+      stopIncrementalSync: () => ipcRenderer.invoke('stop-incremental-sync'),
       selectOutputDir: () => ipcRenderer.invoke('select-output-dir'),
       getStats: () => ipcRenderer.invoke('get-stats'),
       onScrapingProgress: (callback) => {
@@ -30,6 +36,12 @@ function createElectronApiFallback() {
       },
       onFullExportDone: (callback) => {
         ipcRenderer.on('full-export-done', (_event, payload) => callback(payload));
+      },
+      onIncrementalSyncProgress: (callback) => {
+        ipcRenderer.on('incremental-sync-progress', (_event, payload) => callback(payload));
+      },
+      onIncrementalSyncDone: (callback) => {
+        ipcRenderer.on('incremental-sync-done', (_event, payload) => callback(payload));
       },
       removeAllListeners: (channel) => {
         ipcRenderer.removeAllListeners(channel);
@@ -51,6 +63,14 @@ const supportsFullExport = Boolean(
   electronAPI.startFullExport &&
   electronAPI.resumeFullExport &&
   electronAPI.getFullExportTask
+);
+const supportsIncrementalSync = Boolean(
+  electronAPI.getIncrementalSyncConfig &&
+  electronAPI.saveIncrementalSyncConfig &&
+  electronAPI.addIncrementalTargetFromSelected &&
+  electronAPI.removeIncrementalTarget &&
+  electronAPI.runIncrementalSyncNow &&
+  electronAPI.stopIncrementalSync
 );
 
 const tokenInput = document.getElementById('tokenInput');
@@ -88,6 +108,19 @@ const startFullExportBtn = document.getElementById('startFullExportBtn');
 const resumeFullExportBtn = document.getElementById('resumeFullExportBtn');
 const fullExportSnapshot = document.getElementById('fullExportSnapshot');
 const fullExportModeBadge = document.getElementById('fullExportModeBadge');
+const incrementalEnabled = document.getElementById('incrementalEnabled');
+const incrementalDailyTime = document.getElementById('incrementalDailyTime');
+const incrementalDays = document.getElementById('incrementalDays');
+const incrementalRuntimePageSize = document.getElementById('incrementalRuntimePageSize');
+const incrementalRuntimeMaxPages = document.getElementById('incrementalRuntimeMaxPages');
+const saveIncrementalConfigBtn = document.getElementById('saveIncrementalConfigBtn');
+const addIncrementalTargetBtn = document.getElementById('addIncrementalTargetBtn');
+const runIncrementalNowBtn = document.getElementById('runIncrementalNowBtn');
+const stopIncrementalBtn = document.getElementById('stopIncrementalBtn');
+const incrementalTimezone = document.getElementById('incrementalTimezone');
+const incrementalModeBadge = document.getElementById('incrementalModeBadge');
+const incrementalSnapshot = document.getElementById('incrementalSnapshot');
+const incrementalTargetTableBody = document.getElementById('incrementalTargetTableBody');
 
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
@@ -110,7 +143,10 @@ const state = {
   scrapeMode: null,
   activeFullTaskId: '',
   fullExportTask: null,
-  lastFullProgressLogAt: 0
+  lastFullProgressLogAt: 0,
+  incrementalConfig: null,
+  isIncrementalRunning: false,
+  lastIncrementalProgressLogAt: 0
 };
 
 function escapeHtml(value) {
@@ -261,6 +297,298 @@ async function refreshFullExportTask() {
   }
 }
 
+function incrementalStatusLabel(status) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'running') {
+    return '执行中';
+  }
+  if (value === 'success') {
+    return '成功';
+  }
+  if (value === 'partial_failed') {
+    return '部分失败';
+  }
+  if (value === 'failed') {
+    return '失败';
+  }
+  if (value === 'skipped_conflict') {
+    return '冲突跳过';
+  }
+  if (value === 'never') {
+    return '未执行';
+  }
+  return '待机';
+}
+
+function incrementalStatusBadgeType(status) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'success' || value === 'running') {
+    return 'success';
+  }
+  if (value === 'partial_failed' || value === 'skipped_conflict') {
+    return 'warn';
+  }
+  if (value === 'failed') {
+    return 'error';
+  }
+  return 'muted';
+}
+
+function collectIncrementalConfigFromForm() {
+  const current = state.incrementalConfig || {};
+  const scheduler = current.scheduler || {};
+  const runtime = current.runtime || {};
+  return {
+    version: Number(current.version || 1),
+    scheduler: {
+      ...scheduler,
+      enabled: Boolean(incrementalEnabled.checked),
+      dailyTime: String(incrementalDailyTime.value || '08:30')
+    },
+    runtime: {
+      ...runtime,
+      incrementalDays: Math.max(1, Number(incrementalDays.value) || 7),
+      pageSize: Math.max(1, Number(incrementalRuntimePageSize.value) || 10),
+      maxPagesPerRun: Math.max(1, Number(incrementalRuntimeMaxPages.value) || 20)
+    },
+    targets: Array.isArray(current.targets) ? current.targets.map((item) => ({ ...item })) : []
+  };
+}
+
+function renderIncrementalTargets() {
+  const configPayload = state.incrementalConfig || {};
+  const targets = Array.isArray(configPayload.targets) ? configPayload.targets : [];
+
+  if (!targets.length) {
+    incrementalTargetTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无增量同步目标</td></tr>';
+    return;
+  }
+
+  incrementalTargetTableBody.innerHTML = targets.map((target) => {
+    const summary = target.lastSummary || {};
+    const summaryText = `抓取 ${Number(summary.fetched || 0)} / 成功 ${Number(summary.exported || 0)} / 失败 ${Number(summary.failed || 0)}`;
+    return `
+      <tr data-target-id="${escapeHtml(target.id)}">
+        <td><input class="inc-target-enabled" type="checkbox" ${target.enabled ? 'checked' : ''}></td>
+        <td>
+          <div class="inc-target-name">${escapeHtml(target.accountName)}</div>
+          <div class="inc-target-id">${escapeHtml(target.fakeid)}</div>
+        </td>
+        <td>
+          <div class="inc-target-path">${escapeHtml(target.outputDir || '-')}</div>
+          <div class="inc-target-format">格式：${escapeHtml((target.format || 'md').toUpperCase())}</div>
+        </td>
+        <td>
+          ${escapeHtml(incrementalStatusLabel(target.lastStatus))}
+          <br>
+          <span class="inc-target-meta">${escapeHtml(summaryText)}</span>
+        </td>
+        <td>
+          <div class="inc-target-actions">
+            <button class="btn btn-text inc-target-toggle-format">${escapeHtml((target.format || 'md') === 'pdf' ? '改MD' : '改PDF')}</button>
+            <button class="btn btn-text inc-target-remove">删除</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  incrementalTargetTableBody.querySelectorAll('tr[data-target-id]').forEach((row) => {
+    const targetId = row.dataset.targetId;
+    const enabledCheckbox = row.querySelector('.inc-target-enabled');
+    const removeBtn = row.querySelector('.inc-target-remove');
+    const toggleFormatBtn = row.querySelector('.inc-target-toggle-format');
+
+    enabledCheckbox?.addEventListener('change', async () => {
+      const configPayload = state.incrementalConfig || {};
+      const targets = Array.isArray(configPayload.targets) ? configPayload.targets : [];
+      const nextTargets = targets.map((item) => {
+        if (item.id !== targetId) {
+          return item;
+        }
+        return {
+          ...item,
+          enabled: Boolean(enabledCheckbox.checked)
+        };
+      });
+      await saveIncrementalConfig({
+        ...configPayload,
+        targets: nextTargets
+      }, false);
+    });
+
+    removeBtn?.addEventListener('click', async () => {
+      const result = await electronAPI.removeIncrementalTarget({ id: targetId });
+      if (!result.success) {
+        setStatus(`删除增量目标失败：${result.error}`, 'error');
+        return;
+      }
+      state.incrementalConfig = result.config || null;
+      renderIncrementalConfig();
+      setStatus('已删除增量同步目标', 'success');
+    });
+
+    toggleFormatBtn?.addEventListener('click', async () => {
+      const configPayload = state.incrementalConfig || {};
+      const targets = Array.isArray(configPayload.targets) ? configPayload.targets : [];
+      const nextTargets = targets.map((item) => {
+        if (item.id !== targetId) {
+          return item;
+        }
+        return {
+          ...item,
+          format: String(item.format || 'md').toLowerCase() === 'pdf' ? 'md' : 'pdf'
+        };
+      });
+      await saveIncrementalConfig({
+        ...configPayload,
+        targets: nextTargets
+      }, false);
+    });
+  });
+}
+
+function renderIncrementalConfig() {
+  const configPayload = state.incrementalConfig;
+  if (!configPayload) {
+    setBadge(incrementalModeBadge, '未配置', 'muted');
+    incrementalSnapshot.textContent = '尚未加载增量同步配置';
+    renderIncrementalTargets();
+    updateActionState();
+    return;
+  }
+
+  const scheduler = configPayload.scheduler || {};
+  const runtime = configPayload.runtime || {};
+  incrementalEnabled.checked = Boolean(scheduler.enabled);
+  incrementalDailyTime.value = String(scheduler.dailyTime || '08:30');
+  incrementalTimezone.textContent = String(scheduler.timezone || '-');
+  incrementalDays.value = String(Number(runtime.incrementalDays || 7));
+  incrementalRuntimePageSize.value = String(Number(runtime.pageSize || 10));
+  incrementalRuntimeMaxPages.value = String(Number(runtime.maxPagesPerRun || 20));
+
+  const schedulerStatus = state.isIncrementalRunning
+    ? 'running'
+    : String(scheduler.lastStatus || 'idle');
+  setBadge(
+    incrementalModeBadge,
+    incrementalStatusLabel(schedulerStatus),
+    incrementalStatusBadgeType(schedulerStatus)
+  );
+
+  const enabledTargets = (configPayload.targets || []).filter((item) => item.enabled).length;
+  incrementalSnapshot.textContent = [
+    `调度：${scheduler.enabled ? '已启用' : '已关闭'} / 每日 ${scheduler.dailyTime || '08:30'} / 时区 ${scheduler.timezone || '-'}`,
+    `目标：共 ${(configPayload.targets || []).length} 个，启用 ${enabledTargets} 个`,
+    `运行参数：窗口 ${Number(runtime.incrementalDays || 7)} 天，pageSize ${Number(runtime.pageSize || 10)}，maxPages ${Number(runtime.maxPagesPerRun || 20)}`,
+    `上次触发日期：${scheduler.lastTriggeredDate || '-'}`,
+    `上次执行：${scheduler.lastRunAt ? formatDate(scheduler.lastRunAt) : '-'}`,
+    `上次结果：${incrementalStatusLabel(scheduler.lastStatus || 'idle')}`,
+    scheduler.lastMessage ? `说明：${scheduler.lastMessage}` : ''
+  ].filter(Boolean).join('\n');
+
+  renderIncrementalTargets();
+  updateActionState();
+}
+
+async function refreshIncrementalConfig() {
+  if (!supportsIncrementalSync) {
+    state.incrementalConfig = null;
+    renderIncrementalConfig();
+    return;
+  }
+
+  try {
+    const result = await electronAPI.getIncrementalSyncConfig();
+    if (!result.success) {
+      throw new Error(result.error || '读取配置失败');
+    }
+    state.incrementalConfig = result.config || null;
+    renderIncrementalConfig();
+  } catch (error) {
+    setStatus(`读取增量配置失败：${error.message}`, 'error');
+  }
+}
+
+async function saveIncrementalConfig(configPayload, withNotice = true) {
+  const result = await electronAPI.saveIncrementalSyncConfig(configPayload);
+  if (!result.success) {
+    setStatus(`保存增量配置失败：${result.error}`, 'error');
+    return false;
+  }
+
+  state.incrementalConfig = result.config || null;
+  renderIncrementalConfig();
+  if (withNotice) {
+    setStatus('增量同步配置已保存', 'success');
+  }
+  return true;
+}
+
+async function saveIncrementalConfigFromForm() {
+  const payload = collectIncrementalConfigFromForm();
+  await saveIncrementalConfig(payload, true);
+}
+
+async function addSelectedAccountToIncrementalTargets() {
+  if (!state.selectedAccount?.fakeid) {
+    window.alert('请先选择公众号');
+    return;
+  }
+  if (!outputDir.value.trim()) {
+    window.alert('请先选择输出目录');
+    return;
+  }
+
+  const result = await electronAPI.addIncrementalTargetFromSelected({
+    fakeid: state.selectedAccount.fakeid,
+    accountName: state.selectedAccount.name || state.selectedAccount.fakeid,
+    outputDir: outputDir.value.trim(),
+    format: selectedFormat()
+  });
+  if (!result.success) {
+    setStatus(`添加增量目标失败：${result.error}`, 'error');
+    return;
+  }
+
+  state.incrementalConfig = result.config || null;
+  renderIncrementalConfig();
+  setStatus('已添加当前公众号到增量同步目标', 'success');
+}
+
+async function runIncrementalSyncNow() {
+  if (!supportsIncrementalSync) {
+    return;
+  }
+
+  state.isIncrementalRunning = true;
+  state.scrapeMode = 'incremental';
+  state.isScraping = true;
+  state.lastIncrementalProgressLogAt = 0;
+  updateActionState();
+  renderIncrementalConfig();
+  setStatus('正在启动增量同步...');
+
+  const runtimeConfig = collectIncrementalConfigFromForm().runtime;
+  try {
+    const result = await electronAPI.runIncrementalSyncNow({
+      runtime: runtimeConfig
+    });
+    if (!result.success) {
+      throw new Error(result.error || '执行失败');
+    }
+  } catch (error) {
+    state.isIncrementalRunning = false;
+    if (state.scrapeMode === 'incremental') {
+      state.scrapeMode = null;
+    }
+    state.isScraping = false;
+    updateActionState();
+    renderIncrementalConfig();
+    setStatus(`启动增量同步失败：${error.message}`, 'error');
+  }
+}
+
 function updateActionState() {
   const hasOutputDir = outputDir.value.trim().length > 0;
   const canStartManual =
@@ -285,6 +613,13 @@ function updateActionState() {
   startBtn.disabled = !canStartManual;
   startFullExportBtn.disabled = !supportsFullExport || !canStartFull;
   resumeFullExportBtn.disabled = !supportsFullExport || !canResumeFull;
+  const canManageIncremental = supportsIncrementalSync && !state.isScraping;
+  const canRunIncremental = supportsIncrementalSync && !state.isScraping;
+  const canStopIncremental = supportsIncrementalSync && state.isIncrementalRunning;
+  saveIncrementalConfigBtn.disabled = !canManageIncremental;
+  addIncrementalTargetBtn.disabled = !canManageIncremental;
+  runIncrementalNowBtn.disabled = !canRunIncremental;
+  stopIncrementalBtn.disabled = !canStopIncremental;
   stopBtn.disabled = !state.isScraping;
 }
 
@@ -824,6 +1159,17 @@ function bindEvents() {
 
   startFullExportBtn.addEventListener('click', startFullExport);
   resumeFullExportBtn.addEventListener('click', resumeFullExport);
+  saveIncrementalConfigBtn.addEventListener('click', saveIncrementalConfigFromForm);
+  addIncrementalTargetBtn.addEventListener('click', addSelectedAccountToIncrementalTargets);
+  runIncrementalNowBtn.addEventListener('click', runIncrementalSyncNow);
+  stopIncrementalBtn.addEventListener('click', async () => {
+    const result = await electronAPI.stopIncrementalSync();
+    if (!result.success) {
+      setStatus(`停止增量同步失败：${result.error}`, 'error');
+      return;
+    }
+    setStatus(result.message || '已请求停止增量同步', 'warn');
+  });
   startBtn.addEventListener('click', startExport);
   stopBtn.addEventListener('click', stopExport);
 }
@@ -1011,6 +1357,66 @@ function bindIpcEvents() {
       }
     });
   }
+
+  if (electronAPI.onIncrementalSyncProgress) {
+    electronAPI.onIncrementalSyncProgress((payload) => {
+      if (!payload) {
+        return;
+      }
+
+      if (!state.isIncrementalRunning) {
+        state.isIncrementalRunning = true;
+      }
+      if (!state.isScraping || state.scrapeMode !== 'incremental') {
+        state.isScraping = true;
+        state.scrapeMode = 'incremental';
+      }
+
+      const now = Date.now();
+      const type = String(payload.type || '');
+      if (type === 'target-start') {
+        appendLog(`[增量] ${payload.index}/${payload.totalTargets} 开始：${payload.target?.accountName || '-'}`, 'info');
+      } else if (type === 'target-indexed') {
+        appendLog(`[增量] ${payload.target?.accountName || '-'}：窗口内 ${payload.totalArticles || 0} 篇`, 'info');
+      } else if (type === 'target-progress') {
+        const total = Number(payload.total || 0);
+        const current = Number(payload.current || 0);
+        if (total > 0 && (current === total || now - state.lastIncrementalProgressLogAt >= 5000)) {
+          appendLog(`[增量] ${payload.target?.accountName || '-'}：${current}/${total}`, 'info');
+          state.lastIncrementalProgressLogAt = now;
+        }
+      }
+
+      setBadge(incrementalModeBadge, '执行中', 'success');
+      updateActionState();
+    });
+  }
+
+  if (electronAPI.onIncrementalSyncDone) {
+    electronAPI.onIncrementalSyncDone((payload) => {
+      state.isIncrementalRunning = false;
+      if (state.scrapeMode === 'incremental') {
+        state.scrapeMode = null;
+      }
+      state.isScraping = false;
+
+      if (payload?.config) {
+        state.incrementalConfig = payload.config;
+      }
+      renderIncrementalConfig();
+      updateActionState();
+
+      const status = String(payload?.status || '').toLowerCase();
+      const message = payload?.message || '增量同步已结束';
+      if (status === 'success') {
+        setStatus(message, 'success');
+      } else if (status === 'partial_failed' || status === 'skipped_conflict') {
+        setStatus(message, 'warn');
+      } else {
+        setStatus(message, 'error');
+      }
+    });
+  }
 }
 
 async function init() {
@@ -1024,6 +1430,15 @@ async function init() {
     startFullExportBtn.disabled = true;
     resumeFullExportBtn.disabled = true;
     fullExportSnapshot.textContent = '当前版本不支持全量导出，请升级主进程与 preload。';
+  }
+  if (!supportsIncrementalSync) {
+    saveIncrementalConfigBtn.disabled = true;
+    addIncrementalTargetBtn.disabled = true;
+    runIncrementalNowBtn.disabled = true;
+    stopIncrementalBtn.disabled = true;
+    incrementalSnapshot.textContent = '当前版本不支持增量同步，请升级主进程与 preload。';
+  } else {
+    await refreshIncrementalConfig();
   }
 
   updateActionState();

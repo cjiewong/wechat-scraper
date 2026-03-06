@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopFullExport: () => ipcRenderer.invoke('stop-full-export'),
   getFullExportTask: (options) => ipcRenderer.invoke('get-full-export-task', options),
   resumeFullExport: (options) => ipcRenderer.invoke('resume-full-export', options),
+  getIncrementalSyncConfig: () => ipcRenderer.invoke('get-incremental-sync-config'),
+  saveIncrementalSyncConfig: (configPayload) => ipcRenderer.invoke('save-incremental-sync-config', configPayload),
+  addIncrementalTargetFromSelected: (payload) => ipcRenderer.invoke('add-incremental-target-from-selected', payload),
+  removeIncrementalTarget: (payload) => ipcRenderer.invoke('remove-incremental-target', payload),
+  runIncrementalSyncNow: (payload) => ipcRenderer.invoke('run-incremental-sync-now', payload),
+  stopIncrementalSync: () => ipcRenderer.invoke('stop-incremental-sync'),
 
   selectOutputDir: () => ipcRenderer.invoke('select-output-dir'),
   getStats: () => ipcRenderer.invoke('get-stats'),
@@ -36,6 +42,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onFullExportDone: (callback) => {
     ipcRenderer.on('full-export-done', (_event, payload) => callback(payload));
+  },
+
+  onIncrementalSyncProgress: (callback) => {
+    ipcRenderer.on('incremental-sync-progress', (_event, payload) => callback(payload));
+  },
+
+  onIncrementalSyncDone: (callback) => {
+    ipcRenderer.on('incremental-sync-done', (_event, payload) => callback(payload));
   },
 
   removeAllListeners: (channel) => {

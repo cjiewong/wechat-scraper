@@ -126,7 +126,9 @@ h1 {
 .workspace {
   display: grid;
   grid-template-columns: minmax(290px, 0.95fr) minmax(560px, 1.85fr) minmax(300px, 1fr);
-  grid-template-areas: 'session article export';
+  grid-template-areas:
+    'session article export'
+    'incremental incremental incremental';
   gap: 14px;
   min-height: 0;
 }
@@ -141,6 +143,10 @@ h1 {
 
 .export-panel {
   grid-area: export;
+}
+
+.incremental-panel {
+  grid-area: incremental;
 }
 
 .panel {
@@ -224,6 +230,13 @@ textarea {
 input[type='checkbox'],
 input[type='radio'] {
   accent-color: #0f7f6f;
+  width: auto;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
 }
 
 .button-row {
@@ -319,6 +332,12 @@ input[type='radio'] {
   color: #9c312f;
   background: #fbe3dd;
   border-color: #f2c8bc;
+}
+
+.badge-warn {
+  color: #8f5d16;
+  background: #fbf0d8;
+  border-color: #f0ddb4;
 }
 
 .panel-head {
@@ -482,6 +501,118 @@ input[type='radio'] {
   background: linear-gradient(145deg, #f2faf6, #f9fcfb);
 }
 
+.incremental-group {
+  border-color: #cfd6e8;
+  background: linear-gradient(145deg, #f4f7ff, #fbfcff);
+}
+
+.incremental-panel .incremental-group {
+  margin-top: 2px;
+}
+
+.incremental-filters {
+  margin-top: 8px;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.readonly-value {
+  margin-top: 7px;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  border: 1px solid #d7e0ea;
+  background: #ffffff;
+  color: #30495f;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.incremental-table-wrap {
+  margin-top: 8px;
+  max-height: 260px;
+}
+
+.inc-target-path {
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  color: #405f7c;
+}
+
+.inc-target-name {
+  font-weight: 700;
+  color: #24445b;
+}
+
+.inc-target-id {
+  margin-top: 3px;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', 'Consolas', monospace;
+  color: #5d7388;
+}
+
+.inc-target-format {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #4b6780;
+}
+
+.inc-target-meta {
+  font-size: 11px;
+  color: #5e7378;
+}
+
+.inc-target-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.incremental-target-table th:nth-child(1),
+.incremental-target-table td:nth-child(1) {
+  width: 52px;
+}
+
+.incremental-target-table th:nth-child(2),
+.incremental-target-table td:nth-child(2) {
+  min-width: 130px;
+}
+
+.incremental-target-table th:nth-child(3),
+.incremental-target-table td:nth-child(3) {
+  min-width: 170px;
+}
+
+.incremental-target-table th:nth-child(4),
+.incremental-target-table td:nth-child(4) {
+  min-width: 120px;
+}
+
+.incremental-target-table th:nth-child(5),
+.incremental-target-table td:nth-child(5) {
+  min-width: 96px;
+}
+
+.incremental-group .button-row {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.incremental-group input[type='time'] {
+  min-width: 124px;
+}
+
+.incremental-group input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin-top: 12px;
+}
+
 .full-export-head {
   display: flex;
   align-items: center;
@@ -501,6 +632,26 @@ input[type='radio'] {
   font-size: 14px;
   font-weight: 500;
   color: #274b51;
+}
+
+.output-format-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  gap: 10px 28px;
+  align-items: center;
+}
+
+.output-format-group .option-title {
+  grid-column: 1 / -1;
+}
+
+.output-format-group label {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .full-export-snapshot {
@@ -646,12 +797,21 @@ input[type='radio'] {
     grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
     grid-template-areas:
       'session article'
-      'export article';
+      'export article'
+      'incremental incremental';
     align-items: start;
   }
 
   .table-wrap {
     max-height: clamp(220px, 42vh, 390px);
+  }
+
+  .incremental-filters {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .incremental-group .button-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -666,7 +826,8 @@ input[type='radio'] {
     grid-template-areas:
       'article'
       'session'
-      'export';
+      'export'
+      'incremental';
   }
 
   .filters {
@@ -700,6 +861,11 @@ input[type='radio'] {
 
   .account-search,
   .output-row {
+    grid-template-columns: 1fr;
+  }
+
+  .incremental-filters,
+  .incremental-group .button-row {
     grid-template-columns: 1fr;
   }
 
