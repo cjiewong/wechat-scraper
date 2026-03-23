@@ -1,4 +1,4 @@
-name: wechat-scraper-release
+ name: wechat-scraper-release
 
 on:
   push:
